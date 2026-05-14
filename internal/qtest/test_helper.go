@@ -49,6 +49,63 @@ func TestDB(t *testing.T) (database.Database, func()) {
 	}
 }
 
+// TestBunDB returns a Bun-backed test database and close function.
+// This function should only be used as a test helper.
+func TestBunDB(t *testing.T) (database.Database, func()) {
+	t.Helper()
+
+	f, err := os.CreateTemp(t.TempDir(), "test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(f.Name())
+		t.Fatal(err)
+	}
+
+	db, err := database.NewBunDB(f.Name(), Logger(t).Desugar())
+	if err != nil {
+		os.Remove(f.Name())
+		t.Fatal(err)
+	}
+
+	return db, func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+		if err := os.Remove(f.Name()); err != nil {
+			t.Error(err)
+		}
+	}
+}
+
+// ForEachDB runs f as a subtest for each registered database backend (GormDB and BunDB).
+// This is the preferred way to validate that both backends satisfy the same behaviour.
+//
+// Example usage:
+//
+//	func TestGetUser(t *testing.T) {
+//	    qtest.ForEachDB(t, func(t *testing.T, db database.Database) {
+//	        // ... test logic using db ...
+//	    })
+//	}
+func ForEachDB(t *testing.T, f func(t *testing.T, db database.Database)) {
+	t.Helper()
+	for _, tc := range []struct {
+		name   string
+		dbFunc func(*testing.T) (database.Database, func())
+	}{
+		{"gorm", TestDB},
+		{"bun", TestBunDB},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, cleanup := tc.dbFunc(t)
+			defer cleanup()
+			f(t, db)
+		})
+	}
+}
+
 func SetupCourseAssignment(t *testing.T, db database.Database) (*qf.User, *qf.Course, *qf.Assignment) {
 	// create a course and an assignment
 	admin := CreateFakeUser(t, db)
